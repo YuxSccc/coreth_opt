@@ -30,6 +30,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/ava-labs/coreth/consensus"
 	"math/big"
 	"strings"
 	"time"
@@ -886,7 +887,6 @@ func (diff *StateOverride) Apply(state *state.StateDB) error {
 
 func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride, timeout time.Duration, globalGasCap uint64) (*core.ExecutionResult, error) {
 	defer func(start time.Time) { log.Debug("Executing EVM call finished", "runtime", time.Since(start)) }(time.Now())
-
 	state, header, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
 	if state == nil || err != nil {
 		return nil, err
@@ -1133,6 +1133,52 @@ func (s *PublicBlockChainAPI) EstimateGas(ctx context.Context, args TransactionA
 		bNrOrHash = *blockNrOrHash
 	}
 	return DoEstimateGas(ctx, s.b, args, bNrOrHash, s.b.RPCGasCap())
+}
+
+type chainContext struct {
+	api *PublicBlockChainAPI
+	ctx context.Context
+}
+
+func (context *chainContext) Engine() consensus.Engine {
+	return context.api.b.Engine()
+}
+
+func (context *chainContext) GetHeader(hash common.Hash, number uint64) *types.Header {
+	header, err := context.api.b.HeaderByNumber(context.ctx, rpc.BlockNumber(number))
+	if err != nil {
+		return nil
+	}
+	if header.Hash() == hash {
+		return header
+	}
+	header, err = context.api.b.HeaderByHash(context.ctx, hash)
+	if err != nil {
+		return nil
+	}
+	return header
+}
+
+func (s *PublicBlockChainAPI) chainContext(ctx context.Context) core.ChainContext {
+	return &chainContext{api: s, ctx: ctx}
+}
+
+// SimulatorReceiptFromRawTransaction return receipt of rawTx, default tx index is 0
+func (s *PublicBlockChainAPI) SimulatorReceiptFromRawTransaction(ctx context.Context, input hexutil.Bytes) (*types.Receipt, error) {
+	config := s.b.ChainConfig()
+	blockNumberOrHash := rpc.BlockNumberOrHashWithNumber(rpc.PendingBlockNumber)
+	stateDB, header, err := s.b.StateAndHeaderByNumberOrHash(ctx, blockNumberOrHash)
+	if err != nil {
+		return nil, err
+	}
+	tx := new(types.Transaction)
+	if err := tx.UnmarshalBinary(input); err != nil {
+		return nil, err
+	}
+	stateDB.Prepare(tx.Hash(), 0)
+	gp := new(core.GasPool).AddGas(math.MaxUint64)
+	usedGas := new(uint64)
+	return core.ApplyTransaction(config, s.chainContext(ctx), nil, gp, stateDB, header, tx, usedGas, vm.Config{NoBaseFee: true})
 }
 
 // ExecutionResult groups all structured logs emitted by the EVM

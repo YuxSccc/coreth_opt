@@ -98,6 +98,7 @@ type Client interface {
 	SuggestGasPrice(context.Context) (*big.Int, error)
 	SuggestGasTipCap(context.Context) (*big.Int, error)
 	EstimateGas(context.Context, interfaces.CallMsg) (uint64, error)
+	SimulatorReceiptFromRawTransaction(ctx context.Context, input hexutil.Bytes) (*types.Receipt, error)
 	EstimateBaseFee(context.Context) (*big.Int, error)
 	SendTransaction(context.Context, *types.Transaction) error
 }
@@ -326,6 +327,17 @@ func (ec *client) TransactionCount(ctx context.Context, blockHash common.Hash) (
 	var num hexutil.Uint
 	err := ec.c.CallContext(ctx, &num, "eth_getBlockTransactionCountByHash", blockHash)
 	return uint(num), err
+}
+
+func (ec *client) SimulatorReceiptFromRawTransaction(ctx context.Context, input hexutil.Bytes) (*types.Receipt, error) {
+	var r *types.Receipt
+	err := ec.c.CallContext(ctx, &r, "eth_simulatorReceiptFromRawTransaction", input)
+	if err == nil {
+		if r == nil {
+			return nil, interfaces.NotFound
+		}
+	}
+	return r, err
 }
 
 // TransactionInBlock returns a single transaction at index in the given block.
